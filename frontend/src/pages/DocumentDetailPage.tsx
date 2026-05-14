@@ -1,0 +1,439 @@
+import { useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Download,
+  Upload,
+  Clock,
+  FileText,
+  CheckCircle,
+  AlertCircle,
+  Shield,
+  Brain,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useDocument, useUploadVersion, useDocumentAuditTrail } from '@/hooks/useDocuments';
+import { SkeletonCard } from '@/components/SkeletonCard';
+
+export function DocumentDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const { data: document, isLoading, error } = useDocument(id || '');
+  const { data: auditTrail, isLoading: auditLoading } = useDocumentAuditTrail(id || '');
+  const [showVersionUpload, setShowVersionUpload] = useState(false);
+
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-red-600">Failed to load document. Please try again.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <SkeletonCard lines={4} />
+        <SkeletonCard lines={6} />
+      </div>
+    );
+  }
+
+  if (!document) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600">Document not found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <Link to="/documents" className="text-gray-400 hover:text-gray-600">
+          <ArrowLeft className="h-5 w-5" />
+        </Link>
+        <div>
+          <h2 className="text-2xl font-semibold text-gray-900">{document.title}</h2>
+          <p className="mt-1 text-sm text-gray-600">
+            Version {document.currentVersion} · {document.documentType.replace('_', ' ')}
+          </p>
+        </div>
+      </div>
+
+      {/* Metadata */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Document Details</h3>
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Type</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {document.documentType.replace('_', ' ')}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Property</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {document.propertyId ? (
+                <Link to={`/properties/${document.propertyId}`} className="text-indigo-600 hover:text-indigo-500">
+                  {document.propertyName || document.propertyId}
+                </Link>
+              ) : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Tenant</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {document.tenantId ? (
+                <Link to={`/tenants/${document.tenantId}`} className="text-indigo-600 hover:text-indigo-500">
+                  {document.tenantName || document.tenantId}
+                </Link>
+              ) : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Current Version</dt>
+            <dd className="mt-1 text-sm text-gray-900">v{document.currentVersion}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">MIME Type</dt>
+            <dd className="mt-1 text-sm text-gray-900">{document.mimeType}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Size</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {(document.sizeBytes / 1024).toFixed(1)} KB
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Created</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {new Date(document.createdAt).toLocaleDateString()}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Last Updated</dt>
+            <dd className="mt-1 text-sm text-gray-900">
+              {new Date(document.updatedAt).toLocaleDateString()}
+            </dd>
+          </div>
+        </dl>
+      </div>
+
+      {/* AI Abstraction Status and Extracted Terms */}
+      {document.abstraction && (
+        <div className="rounded-lg border border-gray-200 bg-white p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Brain className="h-5 w-5 text-indigo-600" />
+            <h3 className="text-sm font-semibold text-gray-900">AI Abstraction</h3>
+            <span
+              className={`ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                document.abstraction.status === 'approved'
+                  ? 'bg-green-100 text-green-700'
+                  : document.abstraction.status === 'pending'
+                    ? 'bg-amber-100 text-amber-700'
+                    : document.abstraction.status === 'rejected'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {document.abstraction.status}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 mb-4">
+            {document.abstraction.status === 'approved' ? (
+              <CheckCircle className="h-4 w-4 text-green-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-amber-600" />
+            )}
+            <p className="text-sm text-gray-600">
+              Confidence: {(document.abstraction.confidenceScore * 100).toFixed(0)}%
+            </p>
+          </div>
+
+          {/* Extracted Terms Table */}
+          {document.abstraction.extractedTerms &&
+            document.abstraction.extractedTerms.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">
+                  Extracted Terms
+                </h4>
+                <div className="rounded-md border border-gray-200 overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">
+                          Field
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">
+                          Value
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">
+                          Confidence
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {document.abstraction.extractedTerms.map((term, idx) => (
+                        <tr key={idx}>
+                          <td className="px-4 py-2 text-sm text-gray-900 font-medium">
+                            {term.field.replace(/_/g, ' ')}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-700">
+                            {term.value !== null ? String(term.value) : '—'}
+                          </td>
+                          <td className="px-4 py-2">
+                            <ConfidenceBadge score={term.confidence} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          {document.abstraction.status === 'pending' && (
+            <Link
+              to="/abstractions"
+              className="mt-3 inline-block text-sm text-indigo-600 hover:text-indigo-500"
+            >
+              Review abstraction →
+            </Link>
+          )}
+        </div>
+      )}
+
+      {/* Version History */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Clock className="h-5 w-5 text-gray-400" />
+            <h3 className="text-sm font-semibold text-gray-900">Version History</h3>
+          </div>
+          <button
+            onClick={() => setShowVersionUpload(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            <Upload className="h-3 w-3" />
+            Upload New Version
+          </button>
+        </div>
+
+        {showVersionUpload && (
+          <VersionUploadForm
+            documentId={document.id}
+            onClose={() => setShowVersionUpload(false)}
+          />
+        )}
+
+        {document.versions && document.versions.length > 0 ? (
+          <div className="relative">
+            <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
+            <ul className="space-y-4">
+              {document.versions.map((version) => (
+                <li key={version.id} className="relative pl-10">
+                  <div className="absolute left-2.5 top-1.5 h-3 w-3 rounded-full border-2 border-indigo-600 bg-white" />
+                  <div className="flex items-center justify-between rounded-md border border-gray-100 bg-gray-50 p-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        Version {version.versionNumber}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {version.fileName} · {(version.sizeBytes / 1024).toFixed(1)} KB ·{' '}
+                        {new Date(version.createdAt).toLocaleString()}
+                      </p>
+                      {version.changeDescription && (
+                        <p className="text-xs text-gray-400 mt-0.5 italic">
+                          {version.changeDescription}
+                        </p>
+                      )}
+                    </div>
+                    <a
+                      href={`/api/documents/${document.id}/versions/${version.versionNumber}/download`}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="text-center py-6">
+            <FileText className="mx-auto h-8 w-8 text-gray-400" />
+            <p className="mt-2 text-sm text-gray-500">No version history available.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Audit Trail */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Shield className="h-5 w-5 text-gray-400" />
+          <h3 className="text-sm font-semibold text-gray-900">Audit Trail</h3>
+        </div>
+
+        {auditLoading ? (
+          <div className="animate-pulse space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-10 bg-gray-100 rounded" />
+            ))}
+          </div>
+        ) : auditTrail && auditTrail.length > 0 ? (
+          <div className="space-y-2">
+            {auditTrail.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex items-center justify-between rounded-md border border-gray-100 bg-gray-50 px-4 py-2"
+              >
+                <div className="flex items-center gap-3">
+                  <AuditActionIcon action={entry.action} />
+                  <div>
+                    <p className="text-sm text-gray-900 capitalize">
+                      {entry.action.replace(/_/g, ' ')}
+                    </p>
+                    {entry.metadata && Object.keys(entry.metadata).length > 0 && (
+                      <p className="text-xs text-gray-500">
+                        {formatAuditMetadata(entry.metadata)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400">
+                  {new Date(entry.created_at).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 text-center py-4">No audit entries yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfidenceBadge({ score }: { score: number }) {
+  const percentage = (score * 100).toFixed(0);
+  let colorClass = 'bg-red-100 text-red-700';
+  if (score >= 0.85) {
+    colorClass = 'bg-green-100 text-green-700';
+  } else if (score >= 0.6) {
+    colorClass = 'bg-amber-100 text-amber-700';
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colorClass}`}
+    >
+      {percentage}%
+    </span>
+  );
+}
+
+function AuditActionIcon({ action }: { action: string }) {
+  const iconClass = 'h-4 w-4';
+  switch (action) {
+    case 'created':
+    case 'uploaded':
+      return <Upload className={`${iconClass} text-green-500`} />;
+    case 'downloaded':
+      return <Download className={`${iconClass} text-blue-500`} />;
+    case 'updated':
+    case 'version_added':
+      return <Clock className={`${iconClass} text-amber-500`} />;
+    default:
+      return <FileText className={`${iconClass} text-gray-400`} />;
+  }
+}
+
+function formatAuditMetadata(metadata: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (metadata.version) parts.push(`v${metadata.version}`);
+  if (metadata.description) parts.push(String(metadata.description));
+  if (metadata.fileName) parts.push(String(metadata.fileName));
+  return parts.join(' · ') || '';
+}
+
+function VersionUploadForm({
+  documentId,
+  onClose,
+}: {
+  documentId: string;
+  onClose: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [changeDescription, setChangeDescription] = useState('');
+  const uploadMutation = useUploadVersion(documentId);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file) {
+      toast.error('Please select a file.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    if (changeDescription) {
+      formData.append('changeDescription', changeDescription);
+    }
+
+    try {
+      await uploadMutation.mutateAsync(formData);
+      toast.success('New version uploaded successfully!');
+      onClose();
+    } catch {
+      toast.error('Failed to upload version.');
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mb-4 p-4 rounded-md border border-indigo-200 bg-indigo-50"
+    >
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <input
+            type="file"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="text-sm text-gray-700"
+          />
+        </div>
+        <div>
+          <label htmlFor="change-description" className="block text-xs font-medium text-gray-600 mb-1">
+            Change description (optional)
+          </label>
+          <input
+            id="change-description"
+            type="text"
+            value={changeDescription}
+            onChange={(e) => setChangeDescription(e.target.value)}
+            placeholder="Describe what changed..."
+            className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={uploadMutation.isPending || !file}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {uploadMutation.isPending ? 'Uploading...' : 'Upload'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}

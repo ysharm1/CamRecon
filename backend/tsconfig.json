@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*", "knexfile.ts", "migrations/**/*", "seeds/**/*"],
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}
