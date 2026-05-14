@@ -9,6 +9,9 @@ import {
   Send,
   CheckCircle2,
   Sparkles,
+  X,
+  Copy,
+  Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -16,6 +19,7 @@ import {
   useReconciliation,
 } from '@/hooks/useReconciliations';
 import { useProperties } from '@/hooks/useProperties';
+import { useDraftLetter } from '@/hooks/useAI';
 import { SkeletonTable, SkeletonListRow } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
@@ -221,6 +225,8 @@ function ReconciliationDetail({
   onBack: () => void;
 }) {
   const { data: reconciliation, isLoading, error } = useReconciliation(reconciliationId);
+  const [showLetterModal, setShowLetterModal] = useState(false);
+  const draftLetterMutation = useDraftLetter();
 
   function handleDownload(format: 'pdf' | 'excel') {
     const url = `/api/reports/variance?reconciliationId=${reconciliationId}&format=${format}`;
@@ -245,6 +251,17 @@ function ReconciliationDetail({
       .catch(() => {
         toast.error('Failed to generate explanations.', { id: 'explain' });
       });
+  }
+
+  function handleDraftLetter() {
+    draftLetterMutation.mutate(reconciliationId, {
+      onSuccess: () => {
+        setShowLetterModal(true);
+      },
+      onError: () => {
+        toast.error('Failed to generate letter.');
+      },
+    });
   }
 
   if (isLoading) {
@@ -315,6 +332,18 @@ function ReconciliationDetail({
           >
             <Sparkles className="h-4 w-4" />
             Explain variances
+          </button>
+          <button
+            onClick={handleDraftLetter}
+            disabled={draftLetterMutation.isPending}
+            className="inline-flex items-center gap-2 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+          >
+            {draftLetterMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            Draft Letter
           </button>
           <button
             onClick={handleSendToTenants}
@@ -479,7 +508,83 @@ function ReconciliationDetail({
           </div>
         </div>
       )}
+
+      {/* Draft Letter Modal */}
+      {showLetterModal && draftLetterMutation.data && (
+        <DraftLetterModal
+          letter={draftLetterMutation.data.letter}
+          reconciliationId={reconciliationId}
+          onClose={() => setShowLetterModal(false)}
+        />
+      )}
     </>
+  );
+}
+
+function DraftLetterModal({
+  letter,
+  reconciliationId,
+  onClose,
+}: {
+  letter: string;
+  reconciliationId: string;
+  onClose: () => void;
+}) {
+  function handleCopy() {
+    navigator.clipboard.writeText(letter);
+    toast.success('Letter copied to clipboard');
+  }
+
+  function handleDownloadPdf() {
+    const url = `/api/reports/variance?reconciliationId=${reconciliationId}&format=pdf`;
+    window.open(url, '_blank');
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="relative max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-indigo-600" />
+            <h3 className="text-lg font-semibold text-gray-900">CAM Reconciliation Letter</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Letter content */}
+        <div className="overflow-y-auto p-6" style={{ maxHeight: 'calc(85vh - 140px)' }}>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-6">
+            <pre className="whitespace-pre-wrap font-serif text-sm leading-relaxed text-gray-800">
+              {letter}
+            </pre>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <button
+            onClick={handleCopy}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Copy className="h-4 w-4" />
+            Copy to Clipboard
+          </button>
+          <button
+            onClick={handleDownloadPdf}
+            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <FileDown className="h-4 w-4" />
+            Download as PDF
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

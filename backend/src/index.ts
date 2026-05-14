@@ -24,6 +24,7 @@ import { portalRoutes, ownerPortalRoutes } from './portal';
 import { paymentRoutes } from './payments';
 import { billingRoutes } from './billing';
 import { importRoutes } from './import';
+import { aiRoutes } from './ai';
 
 dotenv.config();
 
@@ -62,6 +63,7 @@ app.use('/api/portal/owner', ownerPortalRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/import', importRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Global error handler (must be registered last)
 app.use(errorHandler);

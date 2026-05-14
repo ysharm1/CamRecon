@@ -10,9 +10,12 @@ import {
   AlertCircle,
   Shield,
   Brain,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useDocument, useUploadVersion, useDocumentAuditTrail } from '@/hooks/useDocuments';
+import { useAbstractionSummary, useDocumentInsights } from '@/hooks/useAI';
 import { SkeletonCard } from '@/components/SkeletonCard';
 
 export function DocumentDetailPage() {
@@ -118,6 +121,11 @@ export function DocumentDetailPage() {
           </div>
         </dl>
       </div>
+
+      {/* AI Insights — shown for lease documents with abstractions */}
+      {document.abstraction && (
+        <AIInsightsCard documentId={document.id} abstraction={document.abstraction} />
+      )}
 
       {/* AI Abstraction Status and Extracted Terms */}
       {document.abstraction && (
@@ -312,6 +320,127 @@ export function DocumentDetailPage() {
           <p className="text-sm text-gray-500 text-center py-4">No audit entries yet.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function AIInsightsCard({
+  documentId,
+  abstraction,
+}: {
+  documentId: string;
+  abstraction: {
+    status: string;
+    confidenceScore: number;
+    extractedTerms?: Array<{ field: string; value: string | number | null; confidence: number }>;
+  };
+}) {
+  const summaryMutation = useAbstractionSummary();
+  const insightsMutation = useDocumentInsights();
+  const [generated, setGenerated] = useState(false);
+
+  function handleGenerate() {
+    // Generate both summary and insights
+    summaryMutation.mutate(documentId);
+    insightsMutation.mutate(documentId, {
+      onSuccess: () => setGenerated(true),
+    });
+  }
+
+  const isLoading = summaryMutation.isPending || insightsMutation.isPending;
+  const summary = summaryMutation.data?.summary;
+  const risks = insightsMutation.data?.risks ?? [];
+
+  // Calculate days until expiration from extracted terms
+  const expirationTerm = abstraction.extractedTerms?.find(
+    (t) => t.field === 'expiration_date'
+  );
+  let daysUntilExpiry: number | null = null;
+  if (expirationTerm?.value != null) {
+    const expDate = new Date(String(expirationTerm.value));
+    if (!isNaN(expDate.getTime())) {
+      daysUntilExpiry = Math.ceil(
+        (expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-indigo-100 bg-gradient-to-r from-indigo-50 to-purple-50 p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles className="h-4 w-4 text-indigo-600" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+          AI Insights
+        </span>
+      </div>
+
+      {/* Summary */}
+      {summary ? (
+        <p className="text-sm text-gray-800 leading-relaxed mb-3">{summary}</p>
+      ) : !generated && !isLoading ? (
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm text-gray-500">
+            Generate AI-powered insights for this document.
+          </p>
+          <button
+            onClick={handleGenerate}
+            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            <Sparkles className="h-3 w-3" />
+            Generate
+          </button>
+        </div>
+      ) : null}
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-sm text-indigo-600 mb-3">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Analyzing document...
+        </div>
+      )}
+
+      {/* Key dates */}
+      {daysUntilExpiry !== null && (
+        <div className="mb-3">
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              daysUntilExpiry <= 30
+                ? 'bg-red-100 text-red-700'
+                : daysUntilExpiry <= 90
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-green-100 text-green-700'
+            }`}
+          >
+            {daysUntilExpiry <= 0
+              ? 'Expired'
+              : `Expires in ${daysUntilExpiry} days`}
+          </span>
+        </div>
+      )}
+
+      {/* Risk flags */}
+      {risks.length > 0 && (
+        <div className="space-y-1.5">
+          {risks.map((risk, idx) => (
+            <div key={idx} className="flex items-start gap-2">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 text-amber-500 flex-shrink-0" />
+              <p className="text-xs text-gray-700">{risk}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Link to abstractions */}
+      {generated && (
+        <div className="mt-3 pt-3 border-t border-indigo-100">
+          <Link
+            to="/abstractions"
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
+          >
+            View full abstraction →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

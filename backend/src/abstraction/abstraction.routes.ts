@@ -162,6 +162,115 @@ router.post(
 );
 
 /**
+ * POST /api/abstractions/:documentId/summarize
+ * Generate an AI summary of the lease abstraction for a document.
+ * Returns cached summary if available, otherwise generates a new one.
+ */
+router.post(
+  '/:documentId/summarize',
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { documentId } = req.params;
+
+      if (!documentId) {
+        throw new AppError(400, 'VALIDATION_ERROR', 'documentId is required');
+      }
+
+      // Get the abstraction for this document
+      const abstraction = await abstractionService.getAbstraction(documentId);
+      if (!abstraction) {
+        throw new AppError(
+          404,
+          'ABSTRACTION_NOT_FOUND',
+          `No abstraction results found for document '${documentId}'`
+        );
+      }
+
+      // Check if we have a cached summary stored in extracted_terms metadata
+      const extractedTermsRaw = Array.isArray(abstraction.extracted_terms) ? abstraction.extracted_terms : [];
+      const cachedSummaryTerm = extractedTermsRaw.find((t: ExtractedTerm) => t.fieldName === '__ai_summary');
+      if (cachedSummaryTerm) {
+        res.json({ data: { summary: cachedSummaryTerm.value, source: (cachedSummaryTerm.sourceText as string) === 'ai' ? 'ai' : 'template', cached: true } });
+        return;
+      }
+
+      // Generate summary from extracted terms
+      const extractedTerms = extractedTermsRaw.filter((t: ExtractedTerm) => !t.fieldName.startsWith('__'));
+      const termsMap: Record<string, string> = {};
+      for (const term of extractedTerms) {
+        termsMap[term.fieldName] = term.value;
+      }
+
+      let summary: string;
+      let source: 'ai' | 'template' = 'template';
+
+      // Try AI if OpenAI key is configured
+      if (process.env.OPENAI_API_KEY) {
+        try {
+          const { default: OpenAI } = await import('openai');
+          const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+          const termsStr = extractedTerms.map((t: ExtractedTerm) => `${t.fieldName}: ${t.value}`).join('\n');
+          const prompt = `Summarize this commercial lease in 2-3 concise sentences for a property manager. Include term length, rent, escalation, CAM cap, renewal options, and any notable provisions.\n\nExtracted Terms:\n${termsStr}\n\nProvide a professional, concise summary.`;
+
+          const response = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 200,
+            temperature: 0.3,
+          });
+
+          const aiSummary = response.choices[0]?.message?.content?.trim();
+          if (aiSummary) {
+            summary = aiSummary;
+            source = 'ai';
+          } else {
+            summary = buildTemplateSummary(termsMap);
+          }
+        } catch {
+          summary = buildTemplateSummary(termsMap);
+        }
+      } else {
+        summary = buildTemplateSummary(termsMap);
+      }
+
+      // Cache the summary by appending a special term to extracted_terms
+      const updatedTerms = [...extractedTermsRaw.filter((t: ExtractedTerm) => t.fieldName !== '__ai_summary'), { fieldName: '__ai_summary', value: summary, confidence: 1, sourcePageNumber: 0, sourceText: source }];
+      await db('lease_abstractions')
+        .where({ id: abstraction.id })
+        .update({ extracted_terms: JSON.stringify(updatedTerms) })
+        .catch(() => { /* ignore cache write failures */ });
+
+      res.json({ data: { summary, source, cached: false } });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+function buildTemplateSummary(terms: Record<string, string>): string {
+  const commencement = terms['commencement_date'] || 'N/A';
+  const expiration = terms['expiration_date'] || 'N/A';
+  const baseRent = terms['base_rent'] || 'N/A';
+  const camCap = terms['cam_cap'] || null;
+  const escalation = terms['rent_escalation'] || null;
+  const renewalOption = terms['renewal_option'] || terms['renewal_options'] || null;
+
+  let summary = `Lease from ${commencement} to ${expiration}. Base rent: $${baseRent}/mo.`;
+  if (escalation) {
+    summary += ` Escalation: ${escalation}.`;
+  }
+  if (camCap) {
+    summary += ` CAM cap: $${camCap}/mo.`;
+  }
+  if (renewalOption) {
+    summary += ` Renewal: ${renewalOption}.`;
+  }
+  return summary;
+}
+
+/**
  * GET /api/abstractions/:documentId
  * Get abstraction results for a document.
  */

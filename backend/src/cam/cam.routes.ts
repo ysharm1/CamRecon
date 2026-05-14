@@ -11,12 +11,122 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authenticate } from '../auth';
 import { AppError } from '../middleware/errorHandler';
-import { camService } from './cam.service';
+import { camService, ReconciliationRecord } from './cam.service';
 import { whatIfReconcile } from './cam.engine';
 import { generateVarianceExplanation } from './cam.explain';
 import type { CAMLineItem, TenantLease, WhatIfOptions, AllocationMethod } from './cam.types';
+import db from '../db';
 
 const router = Router();
+
+/**
+ * Generate a professional CAM reconciliation letter.
+ * Uses OpenAI if configured, otherwise falls back to a template.
+ */
+async function generateCAMDraftLetter(reconciliation: ReconciliationRecord): Promise<string> {
+  // Fetch property name
+  const property = await db('properties').where({ id: reconciliation.propertyId }).select('name').first();
+  const propertyName = property?.name || 'the property';
+  const periodStart = reconciliation.periodStart;
+  const periodEnd = reconciliation.periodEnd;
+  const totalActualCosts = reconciliation.totalExpensesCents;
+
+  // Fetch tenant names for allocations
+  const allocations = reconciliation.allocations || [];
+  const tenantIds = allocations.map(a => a.tenantId);
+  const tenants = tenantIds.length > 0
+    ? await db('tenants').whereIn('id', tenantIds).select('id', 'name')
+    : [];
+  const tenantNameMap: Record<string, string> = {};
+  for (const t of tenants) {
+    tenantNameMap[t.id] = t.name;
+  }
+
+  const tenantAllocations = allocations.map(a => ({
+    tenantName: tenantNameMap[a.tenantId] || a.tenantId,
+    squareFootage: a.squareFootage,
+    sharePercentage: a.sharePercentage,
+    allocatedAmount: a.actualAmountCents,
+    budgetedAmount: a.estimatedAmountCents,
+    variance: a.varianceCents,
+  }));
+
+  const totalFormatted = (totalActualCosts / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  // Try AI generation
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const { default: OpenAI } = await import('openai');
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+      const allocSummary = tenantAllocations.map(a =>
+        `- ${a.tenantName}: ${(a.sharePercentage * 100).toFixed(2)}% share, allocated ${(a.allocatedAmount / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}, variance ${a.variance >= 0 ? '+' : ''}${(a.variance / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}`
+      ).join('\n');
+
+      const prompt = `Draft a professional CAM (Common Area Maintenance) reconciliation letter for a commercial property. The letter should be addressed to all tenants of the property.
+
+Property: ${propertyName}
+Reconciliation Period: ${periodStart} to ${periodEnd}
+Total CAM Expenses: ${totalFormatted}
+
+Tenant Allocations:
+${allocSummary}
+
+The letter should:
+1. Be professional and concise
+2. Explain the reconciliation period and total expenses
+3. Note that each tenant's share is based on their pro-rata square footage
+4. Mention that individual statements are attached
+5. Include payment instructions for any amounts owed (net 30 days)
+6. Provide contact information placeholder for questions
+
+Format as a business letter without addresses (those will be added separately).`;
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 600,
+        temperature: 0.3,
+      });
+
+      const aiLetter = response.choices[0]?.message?.content?.trim();
+      if (aiLetter) return aiLetter;
+    } catch { /* fall through to template */ }
+  }
+
+  // Template-based fallback
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  let letter = `${today}\n\n`;
+  letter += `RE: Common Area Maintenance (CAM) Reconciliation\n`;
+  letter += `Property: ${propertyName}\n`;
+  letter += `Period: ${periodStart} to ${periodEnd}\n\n`;
+  letter += `Dear Tenants,\n\n`;
+  letter += `We have completed the annual Common Area Maintenance (CAM) reconciliation for ${propertyName} for the period ${periodStart} through ${periodEnd}.\n\n`;
+  letter += `The total actual CAM expenses for this period were ${totalFormatted}. Each tenant's share has been calculated based on their pro-rata square footage allocation as specified in their respective lease agreements.\n\n`;
+  letter += `Summary of Allocations:\n\n`;
+
+  for (const alloc of tenantAllocations) {
+    const allocated = (alloc.allocatedAmount / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const varianceAbs = Math.abs(alloc.variance);
+    const varianceFormatted = (varianceAbs / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const varianceLabel = alloc.variance > 0 ? `(underpaid by ${varianceFormatted})` : alloc.variance < 0 ? `(overpaid by ${varianceFormatted})` : '(no variance)';
+    letter += `  • ${alloc.tenantName}: ${(alloc.sharePercentage * 100).toFixed(2)}% share — ${allocated} ${varianceLabel}\n`;
+  }
+
+  letter += `\nIndividual tenant statements with detailed line-item breakdowns are attached to this letter.\n\n`;
+  letter += `For tenants with a positive variance (amount owed), payment is due within 30 days of receipt of this notice. Please remit payment to:\n\n`;
+  letter += `  [Property Management Company]\n`;
+  letter += `  [Address]\n`;
+  letter += `  Reference: CAM Reconciliation ${periodStart}-${periodEnd}\n\n`;
+  letter += `For tenants with a negative variance (credit), the overpayment will be applied to your next monthly CAM charge.\n\n`;
+  letter += `If you have any questions regarding this reconciliation, please contact our office at [phone] or [email].\n\n`;
+  letter += `Sincerely,\n\n`;
+  letter += `[Property Manager Name]\n`;
+  letter += `[Property Management Company]`;
+
+  return letter;
+}
 
 const VALID_ALLOCATION_METHODS: AllocationMethod[] = [
   'pro_rata',
@@ -137,6 +247,27 @@ router.post('/:id/explain', authenticate, async (req: Request, res: Response, ne
     const { id } = req.params;
     const explanations = await generateVarianceExplanation(id);
     res.json({ data: explanations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/reconciliations/:id/draft-letter
+ * Generate a professional CAM reconciliation letter addressed to tenants.
+ */
+router.post('/:id/draft-letter', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    // Fetch reconciliation with property and tenant data
+    const reconciliation = await camService.getReconciliation(id);
+    if (!reconciliation) {
+      throw new AppError(404, 'NOT_FOUND', `Reconciliation ${id} not found`);
+    }
+
+    const letter = await generateCAMDraftLetter(reconciliation);
+    res.json({ data: { letter, format: 'text' } });
   } catch (error) {
     next(error);
   }

@@ -13,9 +13,11 @@ import {
 import { useDashboard } from '@/hooks/useDashboard';
 import { useRecentActivity } from '@/hooks/useActivity';
 import { useProperties } from '@/hooks/useProperties';
+import { useRenewalRisks } from '@/hooks/useAI';
 import { SkeletonMetricCard, SkeletonListRow } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
+import type { RenewalRisk } from '@/hooks/useAI';
 
 /**
  * Dashboard. Single-purpose: drive the user toward the CAM workflow.
@@ -97,7 +99,8 @@ export function DashboardPage() {
 
       {/* Main two-column area */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-3 space-y-6">
+          <RenewalRisksCard />
           <StartReconciliationCard />
         </div>
         <div className="lg:col-span-2">
@@ -242,6 +245,81 @@ function StartReconciliationCard() {
         />
       )}
     </div>
+  );
+}
+
+// ---------- Renewal Risks ----------
+
+function RenewalRisksCard() {
+  const { data, isLoading } = useRenewalRisks();
+  const risks = data?.risks ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5 text-amber-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Renewal risks</h3>
+        </div>
+        <div className="space-y-2">
+          <SkeletonListRow />
+          <SkeletonListRow />
+        </div>
+      </div>
+    );
+  }
+
+  if (risks.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-6">
+      <div className="mb-4 flex items-center gap-2">
+        <AlertTriangle className="h-5 w-5 text-amber-600" />
+        <h3 className="text-sm font-semibold text-gray-900">Renewal risks</h3>
+        <span className="ml-auto text-xs text-gray-400">Expiring leases within 90 days</span>
+      </div>
+
+      <div className="space-y-3">
+        {risks.map((risk: RenewalRisk) => (
+          <div
+            key={risk.tenantId}
+            className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3"
+          >
+            <RiskBadge status={risk.status} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Link
+                  to={`/tenants/${risk.tenantId}`}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                >
+                  {risk.tenantName}
+                </Link>
+                <span className="text-xs text-gray-400">·</span>
+                <span className="text-xs text-gray-500">{risk.propertyName}</span>
+              </div>
+              <p className="mt-0.5 text-xs text-gray-600">{risk.message}</p>
+              <p className="mt-0.5 text-xs text-gray-400">
+                Expires {new Date(risk.expirationDate).toLocaleDateString()} ({risk.daysUntilExpiry} days)
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RiskBadge({ status }: { status: 'missed' | 'urgent' | 'upcoming' }) {
+  const config = {
+    missed: { bg: 'bg-red-100 text-red-700', label: 'MISSED' },
+    urgent: { bg: 'bg-orange-100 text-orange-700', label: 'URGENT' },
+    upcoming: { bg: 'bg-yellow-100 text-yellow-700', label: 'UPCOMING' },
+  };
+  const { bg, label } = config[status];
+  return (
+    <span className={`mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${bg}`}>
+      {label}
+    </span>
   );
 }
 
