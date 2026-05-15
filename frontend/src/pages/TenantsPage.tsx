@@ -1,17 +1,19 @@
 import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Users, Search, Plus, Eye, FileText, Mail } from 'lucide-react';
+import { Users, Plus, Eye, FileText, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTenants } from '@/hooks/useTenants';
 import { useProperties } from '@/hooks/useProperties';
 import { SkeletonTable } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { RowActions } from '@/components/RowActions';
+import { IndexHeader } from '@/components/IndexHeader';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
 
 export function TenantsPage() {
   const [search, setSearch] = useState('');
   const [propertyFilter, setPropertyFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const { data: tenants, isLoading, error, refetch } = useTenants(propertyFilter || undefined);
   const { data: properties } = useProperties();
   const navigate = useNavigate();
@@ -20,14 +22,16 @@ export function TenantsPage() {
   const filtered = useMemo(() => {
     if (!tenants) return [];
     const q = search.trim().toLowerCase();
-    if (!q) return tenants;
-    return tenants.filter(
-      (t) =>
+    return tenants.filter((t) => {
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
         t.name.toLowerCase().includes(q) ||
         t.suiteNumber.toLowerCase().includes(q) ||
-        t.contactEmail.toLowerCase().includes(q),
-    );
-  }, [tenants, search]);
+        t.contactEmail.toLowerCase().includes(q)
+      );
+    });
+  }, [tenants, search, statusFilter]);
 
   if (error) {
     return (
@@ -48,63 +52,87 @@ export function TenantsPage() {
     );
   }
 
+  const total = tenants?.length ?? 0;
+  const showing = filtered.length;
+  const propertyName = properties?.find((p) => p.id === propertyFilter)?.name;
+
+  const activeFilters = [
+    ...(propertyFilter && propertyName
+      ? [{ label: `Property: ${propertyName}`, onRemove: () => setPropertyFilter('') }]
+      : []),
+    ...(statusFilter
+      ? [{ label: `Status: ${statusFilter}`, onRemove: () => setStatusFilter('') }]
+      : []),
+    ...(search
+      ? [{ label: `Search: "${search}"`, onRemove: () => setSearch('') }]
+      : []),
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Tenants</h2>
-          <p className="mt-1 text-sm text-gray-600">View and manage tenant information.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => open('quickAddTenant')}
-          className="inline-flex items-center gap-2 self-start rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 sm:self-auto"
-        >
-          <Plus className="h-4 w-4" />
-          Add tenant
-        </button>
-      </div>
+      <IndexHeader
+        title="Tenants"
+        description="View and manage tenant information."
+        count={total}
+        primaryAction={{
+          label: 'Add tenant',
+          icon: Plus,
+          onClick: () => open('quickAddTenant'),
+        }}
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search tenants...',
+        }}
+        filters={
+          <>
+            <select
+              value={propertyFilter}
+              onChange={(e) => setPropertyFilter(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All properties</option>
+              {properties?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="pending">Pending</option>
+            </select>
+          </>
+        }
+        activeFilters={activeFilters}
+        resultLabel={
+          total > 0 && showing !== total
+            ? `Showing ${showing} of ${total}`
+            : total > 0
+              ? `Showing ${total}`
+              : undefined
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search tenants..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          />
-        </div>
-        <select
-          value={propertyFilter}
-          onChange={(e) => setPropertyFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        >
-          <option value="">All properties</option>
-          {properties?.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Table */}
       {isLoading ? (
         <SkeletonTable rows={6} columns={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={tenants && tenants.length === 0 ? 'No tenants yet' : 'No tenants match'}
+          title={total === 0 ? 'No tenants yet' : 'No tenants match'}
           description={
-            tenants && tenants.length === 0
+            total === 0
               ? 'Add a tenant to an existing property to get started.'
-              : 'Try a different search or clear the property filter.'
+              : 'Try a different search or clear filters.'
           }
           action={
-            tenants && tenants.length === 0 ? (
+            total === 0 ? (
               <button
                 type="button"
                 onClick={() => open('quickAddTenant')}

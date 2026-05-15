@@ -1,7 +1,6 @@
-import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft,
   Download,
   Upload,
   Clock,
@@ -12,23 +11,60 @@ import {
   Brain,
   Sparkles,
   Loader2,
+  Copy,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useDocument, useUploadVersion, useDocumentAuditTrail } from '@/hooks/useDocuments';
+import {
+  useDocument,
+  useDocuments,
+  useUploadVersion,
+  useDocumentAuditTrail,
+} from '@/hooks/useDocuments';
 import { useAbstractionSummary, useDocumentInsights } from '@/hooks/useAI';
 import { SkeletonCard } from '@/components/SkeletonCard';
+import { EmptyState } from '@/components/EmptyState';
+import { DetailHeader, StatusTone } from '@/components/DetailHeader';
+
+const DOC_TYPE_LABEL: Record<string, string> = {
+  lease: 'Lease',
+  amendment: 'Amendment',
+  cam_report: 'CAM Report',
+  insurance: 'Insurance',
+  correspondence: 'Correspondence',
+  other: 'Other',
+};
 
 export function DocumentDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { data: document, isLoading, error } = useDocument(id || '');
   const { data: auditTrail, isLoading: auditLoading } = useDocumentAuditTrail(id || '');
+  const { data: propertyDocuments } = useDocuments(document?.propertyId);
   const [showVersionUpload, setShowVersionUpload] = useState(false);
+
+  const siblings = useMemo(() => {
+    if (!propertyDocuments || !document) return [];
+    return propertyDocuments
+      .filter((d) => d.propertyId === document.propertyId)
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .map((d) => ({ id: d.id, label: d.title }));
+  }, [propertyDocuments, document]);
 
   if (error) {
     return (
-      <div className="text-center py-12">
-        <p className="text-red-600">Failed to load document. Please try again.</p>
-      </div>
+      <EmptyState
+        icon={FileText}
+        title="Couldn't load document"
+        description="Failed to fetch document details."
+        action={
+          <Link
+            to="/documents"
+            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Back to documents
+          </Link>
+        }
+      />
     );
   }
 
@@ -43,62 +79,135 @@ export function DocumentDetailPage() {
 
   if (!document) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-600">Document not found.</p>
-      </div>
+      <EmptyState
+        icon={FileText}
+        title="Document not found"
+        description="This document may have been removed or you don't have access."
+        action={
+          <Link
+            to="/documents"
+            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Back to documents
+          </Link>
+        }
+      />
     );
+  }
+
+  const docTypeLabel = DOC_TYPE_LABEL[document.documentType] ?? document.documentType.replace(/_/g, ' ');
+
+  const abstractionTone: StatusTone | undefined = document.abstraction
+    ? document.abstraction.status === 'approved'
+      ? 'success'
+      : document.abstraction.status === 'pending'
+        ? 'warning'
+        : document.abstraction.status === 'rejected'
+          ? 'error'
+          : 'neutral'
+    : undefined;
+
+  function handleCopyLink() {
+    const url = `${window.location.origin}/documents/${document!.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      toast.success('Link copied to clipboard');
+    });
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to="/documents" className="text-gray-400 hover:text-gray-600">
-          <ArrowLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">{document.title}</h2>
-          <p className="mt-1 text-sm text-gray-600">
-            Version {document.currentVersion} · {document.documentType.replace('_', ' ')}
-          </p>
-        </div>
-      </div>
+      <DetailHeader
+        breadcrumb={[
+          { label: 'Documents', href: '/documents' },
+          { label: document.title },
+        ]}
+        icon={FileText}
+        iconColor="violet"
+        title={document.title}
+        subtitle={
+          <>
+            <span className="capitalize">{docTypeLabel}</span>
+            {' · '}v{document.currentVersion}
+            {' · '}
+            {(document.sizeBytes / 1024).toFixed(1)} KB
+            {document.propertyName && (
+              <>
+                {' · '}
+                <Link
+                  to={`/properties/${document.propertyId}`}
+                  className="text-indigo-600 hover:text-indigo-500"
+                >
+                  {document.propertyName}
+                </Link>
+              </>
+            )}
+            {document.tenantName && (
+              <>
+                {' · '}
+                <Link
+                  to={`/tenants/${document.tenantId}`}
+                  className="text-indigo-600 hover:text-indigo-500"
+                >
+                  {document.tenantName}
+                </Link>
+              </>
+            )}
+          </>
+        }
+        status={
+          abstractionTone && document.abstraction
+            ? { label: document.abstraction.status, tone: abstractionTone }
+            : undefined
+        }
+        recordSwitcher={
+          siblings.length > 1
+            ? {
+                items: siblings,
+                currentId: document.id,
+                onSelect: (newId) => navigate(`/documents/${newId}`),
+              }
+            : undefined
+        }
+        actions={
+          <>
+            <a
+              href={`/api/documents/${document.id}/versions/${document.currentVersion}/download`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download
+            </a>
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy link
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowVersionUpload(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              New version
+            </button>
+          </>
+        }
+      />
 
-      {/* Metadata */}
+      {/* AI Insights — shown for lease documents with abstractions */}
+      {document.abstraction && (
+        <AIInsightsCard documentId={document.id} abstraction={document.abstraction} />
+      )}
+
+      {/* Metadata grid (compact) */}
       <div className="rounded-lg border border-gray-200 bg-white p-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-4">Document Details</h3>
-        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Metadata</h3>
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">Type</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {document.documentType.replace('_', ' ')}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">Property</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {document.propertyId ? (
-                <Link to={`/properties/${document.propertyId}`} className="text-indigo-600 hover:text-indigo-500">
-                  {document.propertyName || document.propertyId}
-                </Link>
-              ) : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">Tenant</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {document.tenantId ? (
-                <Link to={`/tenants/${document.tenantId}`} className="text-indigo-600 hover:text-indigo-500">
-                  {document.tenantName || document.tenantId}
-                </Link>
-              ) : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">Current Version</dt>
-            <dd className="mt-1 text-sm text-gray-900">v{document.currentVersion}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">MIME Type</dt>
+            <dt className="text-xs font-medium text-gray-500 uppercase">MIME type</dt>
             <dd className="mt-1 text-sm text-gray-900">{document.mimeType}</dd>
           </div>
           <div>
@@ -114,7 +223,7 @@ export function DocumentDetailPage() {
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium text-gray-500 uppercase">Last Updated</dt>
+            <dt className="text-xs font-medium text-gray-500 uppercase">Last updated</dt>
             <dd className="mt-1 text-sm text-gray-900">
               {new Date(document.updatedAt).toLocaleDateString()}
             </dd>
@@ -122,12 +231,7 @@ export function DocumentDetailPage() {
         </dl>
       </div>
 
-      {/* AI Insights — shown for lease documents with abstractions */}
-      {document.abstraction && (
-        <AIInsightsCard documentId={document.id} abstraction={document.abstraction} />
-      )}
-
-      {/* AI Abstraction Status and Extracted Terms */}
+      {/* AI Abstraction status and extracted terms */}
       {document.abstraction && (
         <div className="rounded-lg border border-gray-200 bg-white p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -159,7 +263,6 @@ export function DocumentDetailPage() {
             </p>
           </div>
 
-          {/* Extracted Terms Table */}
           {document.abstraction.extractedTerms &&
             document.abstraction.extractedTerms.length > 0 && (
               <div className="mt-4">
@@ -212,19 +315,19 @@ export function DocumentDetailPage() {
         </div>
       )}
 
-      {/* Version History */}
+      {/* Versions */}
       <div className="rounded-lg border border-gray-200 bg-white p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-gray-400" />
-            <h3 className="text-sm font-semibold text-gray-900">Version History</h3>
+            <h3 className="text-sm font-semibold text-gray-900">Version history</h3>
           </div>
           <button
             onClick={() => setShowVersionUpload(true)}
             className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
           >
             <Upload className="h-3 w-3" />
-            Upload New Version
+            Upload new version
           </button>
         </div>
 
@@ -281,7 +384,7 @@ export function DocumentDetailPage() {
       <div className="rounded-lg border border-gray-200 bg-white p-6">
         <div className="flex items-center gap-2 mb-4">
           <Shield className="h-5 w-5 text-gray-400" />
-          <h3 className="text-sm font-semibold text-gray-900">Audit Trail</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Audit trail</h3>
         </div>
 
         {auditLoading ? (
@@ -340,7 +443,6 @@ function AIInsightsCard({
   const [generated, setGenerated] = useState(false);
 
   function handleGenerate() {
-    // Generate both summary and insights
     summaryMutation.mutate(documentId);
     insightsMutation.mutate(documentId, {
       onSuccess: () => setGenerated(true),
@@ -351,7 +453,6 @@ function AIInsightsCard({
   const summary = summaryMutation.data?.summary;
   const risks = insightsMutation.data?.risks ?? [];
 
-  // Calculate days until expiration from extracted terms
   const expirationTerm = abstraction.extractedTerms?.find(
     (t) => t.field === 'expiration_date'
   );
@@ -374,7 +475,6 @@ function AIInsightsCard({
         </span>
       </div>
 
-      {/* Summary */}
       {summary ? (
         <p className="text-sm text-gray-800 leading-relaxed mb-3">{summary}</p>
       ) : !generated && !isLoading ? (
@@ -399,7 +499,6 @@ function AIInsightsCard({
         </div>
       )}
 
-      {/* Key dates */}
       {daysUntilExpiry !== null && (
         <div className="mb-3">
           <span
@@ -418,7 +517,6 @@ function AIInsightsCard({
         </div>
       )}
 
-      {/* Risk flags */}
       {risks.length > 0 && (
         <div className="space-y-1.5">
           {risks.map((risk, idx) => (
@@ -430,7 +528,6 @@ function AIInsightsCard({
         </div>
       )}
 
-      {/* Link to abstractions */}
       {generated && (
         <div className="mt-3 pt-3 border-t border-indigo-100">
           <Link

@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, Search, ArrowUpDown, Plus, Eye, UserPlus, Calculator } from 'lucide-react';
+import { Building2, ArrowUpDown, Plus, Eye, UserPlus, Calculator } from 'lucide-react';
 import { useProperties } from '@/hooks/useProperties';
 import { SkeletonTable } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { RowActions } from '@/components/RowActions';
+import { IndexHeader } from '@/components/IndexHeader';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
 
 type SortField = 'name' | 'propertyType' | 'totalSquareFootage';
@@ -13,6 +14,7 @@ type SortDir = 'asc' | 'desc';
 export function PropertiesPage() {
   const { data: properties, isLoading, error, refetch } = useProperties();
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const navigate = useNavigate();
@@ -21,11 +23,13 @@ export function PropertiesPage() {
   const filtered = useMemo(() => {
     if (!properties) return [];
     const q = search.trim().toLowerCase();
-    let result = q
-      ? properties.filter(
-          (p) => p.name.toLowerCase().includes(q) || p.propertyType.toLowerCase().includes(q),
-        )
-      : properties.slice();
+    let result = properties.filter((p) => {
+      if (typeFilter && p.propertyType !== typeFilter) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) || p.propertyType.toLowerCase().includes(q)
+      );
+    });
     result = result.sort((a, b) => {
       const aVal = a[sortField];
       const bVal = b[sortField];
@@ -38,7 +42,12 @@ export function PropertiesPage() {
       return 0;
     });
     return result;
-  }, [properties, search, sortField, sortDir]);
+  }, [properties, search, typeFilter, sortField, sortDir]);
+
+  const propertyTypes = useMemo(() => {
+    if (!properties) return [];
+    return Array.from(new Set(properties.map((p) => p.propertyType))).sort();
+  }, [properties]);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -68,34 +77,56 @@ export function PropertiesPage() {
     );
   }
 
+  const total = properties?.length ?? 0;
+  const showing = filtered.length;
+  const activeFilters = [
+    ...(typeFilter
+      ? [{ label: `Type: ${typeFilter}`, onRemove: () => setTypeFilter('') }]
+      : []),
+    ...(search
+      ? [{ label: `Search: "${search}"`, onRemove: () => setSearch('') }]
+      : []),
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Properties</h2>
-          <p className="mt-1 text-sm text-gray-600">Manage your property portfolio.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => open('quickAddProperty')}
-          className="inline-flex items-center gap-2 self-start rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 sm:self-auto"
-        >
-          <Plus className="h-4 w-4" />
-          New property
-        </button>
-      </div>
-
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <input
-          type="text"
-          placeholder="Search properties..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        />
-      </div>
+      <IndexHeader
+        title="Properties"
+        description="Manage your property portfolio."
+        count={total}
+        primaryAction={{
+          label: 'New property',
+          icon: Plus,
+          onClick: () => open('quickAddProperty'),
+        }}
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search properties...',
+        }}
+        filters={
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">All types</option>
+            {propertyTypes.map((t) => (
+              <option key={t} value={t} className="capitalize">
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </option>
+            ))}
+          </select>
+        }
+        activeFilters={activeFilters}
+        resultLabel={
+          total > 0 && showing !== total
+            ? `Showing ${showing} of ${total}`
+            : total > 0
+              ? `Showing ${total}`
+              : undefined
+        }
+      />
 
       {/* Table */}
       {isLoading ? (
@@ -103,14 +134,14 @@ export function PropertiesPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Building2}
-          title={properties && properties.length === 0 ? 'No properties yet' : 'No properties match'}
+          title={total === 0 ? 'No properties yet' : 'No properties match'}
           description={
-            properties && properties.length === 0
+            total === 0
               ? 'Add your first property to start tracking tenants, leases, and reconciliations.'
-              : 'Try a different search term.'
+              : 'Try a different search term or clear filters.'
           }
           action={
-            properties && properties.length === 0 ? (
+            total === 0 ? (
               <button
                 type="button"
                 onClick={() => open('quickAddProperty')}

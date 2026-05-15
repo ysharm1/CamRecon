@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft,
   Building2,
   Users,
   FileText,
@@ -10,21 +9,29 @@ import {
   Plus,
   Calculator,
   TrendingUp,
-  Ruler,
   Clock,
+  DollarSign,
+  CalendarClock,
   LucideIcon,
 } from 'lucide-react';
-import { useProperty, usePropertyActivity } from '@/hooks/useProperties';
+import { useProperties, useProperty, usePropertyActivity } from '@/hooks/useProperties';
 import { useReconciliations } from '@/hooks/useReconciliations';
+import { useTenants } from '@/hooks/useTenants';
 import { SkeletonMetricCard, SkeletonListRow } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { DetailHeader } from '@/components/DetailHeader';
+import { KPICard } from '@/components/KPICard';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
 
 type Tab = 'overview' | 'documents' | 'tenants' | 'reconciliations' | 'activity';
 
+const RENT_PER_SQFT_PER_YEAR_CENTS = 3500; // $35/sqft/year — fallback estimate
+
 export function PropertyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: property, isLoading, error, refetch } = useProperty(id || '');
+  const { data: allProperties } = useProperties();
+  const { data: tenantList } = useTenants(id || undefined);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const { open } = useGlobalUI();
   const navigate = useNavigate();
@@ -33,17 +40,48 @@ export function PropertyDetailPage() {
 
   const metrics = useMemo(() => {
     if (!property) return null;
-    const activeTenants = (property.tenants || []).filter((t) => t.status === 'active');
+    const tenants = property.tenants || [];
+    const activeTenants = tenants.filter((t) => t.status === 'active');
     const occupiedArea = activeTenants.reduce((sum, t) => sum + t.squareFootage, 0);
     const occupancyRate = property.totalSquareFootage > 0 ? occupiedArea / property.totalSquareFootage : 0;
+
+    // Estimated total annual rent — based on occupied area at standard rate.
+    // (Backend doesn't currently expose per-tenant base rent on property detail.)
+    const annualRentCents = occupiedArea * RENT_PER_SQFT_PER_YEAR_CENTS;
+
+    // Expiring within 90 days — derived from tenants' lease info if present.
+    // The /properties/:id endpoint doesn't include lease data so we use the
+    // tenants list (filtered by propertyId) when available.
+    const ninetyDays = 90 * 24 * 60 * 60 * 1000;
+    const expiringSoon = (tenantList || []).filter((t) => {
+      const exp = (t as { lease?: { expirationDate?: string } }).lease?.expirationDate;
+      if (!exp) return false;
+      const ms = new Date(exp).getTime() - Date.now();
+      return ms > 0 && ms <= ninetyDays;
+    }).length;
+
+    const lastReconciliation = reconciliations && reconciliations.length > 0 ? reconciliations[0] : null;
+
     return {
-      totalTenants: property.tenants?.length ?? 0,
+      totalTenants: tenants.length,
       activeTenants: activeTenants.length,
       documents: property.documents?.length ?? 0,
       occupancyRate,
       occupiedArea,
+      annualRentCents,
+      expiringSoon,
+      lastReconciliation,
     };
-  }, [property]);
+  }, [property, tenantList, reconciliations]);
+
+  // Sibling list for record switcher (alphabetical)
+  const siblings = useMemo(() => {
+    if (!allProperties) return [];
+    return allProperties
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => ({ id: p.id, label: p.name }));
+  }, [allProperties]);
 
   if (error) {
     return (
@@ -93,80 +131,112 @@ export function PropertyDetailPage() {
     { key: 'activity', label: 'Activity', icon: ActivityIcon, count: activities?.length },
   ];
 
+  const occupancyTone =
+    metrics && metrics.occupancyRate >= 0.9
+      ? 'success'
+      : metrics && metrics.occupancyRate >= 0.7
+        ? 'warning'
+        : 'error';
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <Link
-          to="/properties"
-          className="mb-2 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to properties
-        </Link>
-        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-3">
-            <div className="rounded-full bg-indigo-50 p-2">
-              <Building2 className="h-6 w-6 text-indigo-600" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-semibold text-gray-900">{property.name}</h2>
-              <p className="text-sm capitalize text-gray-500">
-                {property.propertyType} · {property.totalSquareFootage.toLocaleString()} sqft
-              </p>
-            </div>
-          </div>
-          <QuickActionBar
-            onUpload={() => open('upload', { upload: { propertyId: property.id } })}
-            onAddTenant={() => open('quickAddTenant', { quickAddTenant: { propertyId: property.id } })}
-            onNewRecon={() =>
-              open('quickAddReconciliation', {
-                quickAddReconciliation: { propertyId: property.id },
-              })
-            }
-          />
-        </div>
-      </div>
+      <DetailHeader
+        breadcrumb={[
+          { label: 'Properties', href: '/properties' },
+          { label: property.name },
+        ]}
+        icon={Building2}
+        iconColor="indigo"
+        title={property.name}
+        subtitle={
+          <span className="capitalize">
+            {property.propertyType} · {property.totalSquareFootage.toLocaleString()} sqft
+            {property.address ? ` · ${property.address.city}, ${property.address.state}` : ''}
+          </span>
+        }
+        status={
+          metrics
+            ? {
+                label: `${(metrics.occupancyRate * 100).toFixed(0)}% occupied`,
+                tone: occupancyTone,
+              }
+            : undefined
+        }
+        recordSwitcher={
+          siblings.length > 1
+            ? {
+                items: siblings,
+                currentId: property.id,
+                onSelect: (newId) => navigate(`/properties/${newId}`),
+              }
+            : undefined
+        }
+        actions={
+          <>
+            <QuickBtn
+              icon={Upload}
+              label="+ Document"
+              onClick={() => open('upload', { upload: { propertyId: property.id } })}
+            />
+            <QuickBtn
+              icon={Plus}
+              label="+ Tenant"
+              onClick={() => open('quickAddTenant', { quickAddTenant: { propertyId: property.id } })}
+            />
+            <QuickBtn
+              icon={Calculator}
+              label="+ Reconciliation"
+              onClick={() =>
+                open('quickAddReconciliation', {
+                  quickAddReconciliation: { propertyId: property.id },
+                })
+              }
+              primary
+            />
+          </>
+        }
+      />
 
-      {/* Key metrics */}
+      {/* KPI snapshot row */}
       {metrics && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <PropertyMetric
-            label="Occupancy rate"
-            icon={TrendingUp}
-            value={`${(metrics.occupancyRate * 100).toFixed(1)}%`}
-            sub={
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-                <div
-                  className={`h-full rounded-full ${
-                    metrics.occupancyRate >= 0.9
-                      ? 'bg-green-500'
-                      : metrics.occupancyRate >= 0.7
-                        ? 'bg-amber-500'
-                        : 'bg-red-500'
-                  }`}
-                  style={{ width: `${Math.min(metrics.occupancyRate * 100, 100)}%` }}
-                />
-              </div>
-            }
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <KPICard
+            label="Annual rent"
+            icon={DollarSign}
+            value={formatCurrency(metrics.annualRentCents)}
+            hint="Estimated"
           />
-          <PropertyMetric
+          <KPICard
+            label="Occupancy"
+            icon={TrendingUp}
+            value={`${(metrics.occupancyRate * 100).toFixed(0)}%`}
+            hint={`${metrics.occupiedArea.toLocaleString()} / ${property.totalSquareFootage.toLocaleString()} sqft`}
+          />
+          <KPICard
             label="Active tenants"
             icon={Users}
             value={metrics.activeTenants.toString()}
-            sub={`${metrics.totalTenants - metrics.activeTenants} inactive`}
+            hint={
+              metrics.totalTenants > metrics.activeTenants
+                ? `${metrics.totalTenants - metrics.activeTenants} inactive`
+                : undefined
+            }
           />
-          <PropertyMetric
-            label="Occupied area"
-            icon={Ruler}
-            value={`${metrics.occupiedArea.toLocaleString()} sqft`}
-            sub={`of ${property.totalSquareFootage.toLocaleString()} sqft`}
+          <KPICard
+            label="Expiring (90d)"
+            icon={CalendarClock}
+            value={metrics.expiringSoon.toString()}
+            hint={metrics.expiringSoon === 0 ? 'No upcoming' : 'Leases expiring soon'}
           />
-          <PropertyMetric
-            label="Documents"
-            icon={FileText}
-            value={metrics.documents.toString()}
-            sub={metrics.documents === 1 ? 'file on record' : 'files on record'}
+          <KPICard
+            label="Last reconciliation"
+            icon={Calculator}
+            value={
+              metrics.lastReconciliation
+                ? `${metrics.lastReconciliation.periodStart} — ${metrics.lastReconciliation.periodEnd}`
+                : '—'
+            }
+            hint={metrics.lastReconciliation ? metrics.lastReconciliation.status : 'None yet'}
           />
         </div>
       )}
@@ -225,24 +295,11 @@ export function PropertyDetailPage() {
   );
 }
 
-// --- Quick action bar ---
+// --- Helpers ---
 
-function QuickActionBar({
-  onUpload,
-  onAddTenant,
-  onNewRecon,
-}: {
-  onUpload: () => void;
-  onAddTenant: () => void;
-  onNewRecon: () => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <QuickBtn icon={Upload} label="Upload" onClick={onUpload} />
-      <QuickBtn icon={Plus} label="Add tenant" onClick={onAddTenant} />
-      <QuickBtn icon={Calculator} label="New reconciliation" onClick={onNewRecon} primary />
-    </div>
-  );
+function formatCurrency(cents: number) {
+  if (!cents) return '$0';
+  return `$${Math.round(cents / 100).toLocaleString()}`;
 }
 
 function QuickBtn({
@@ -269,31 +326,6 @@ function QuickBtn({
       <Icon className="h-3.5 w-3.5" />
       {label}
     </button>
-  );
-}
-
-// --- Metric ---
-
-function PropertyMetric({
-  label,
-  icon: Icon,
-  value,
-  sub,
-}: {
-  label: string;
-  icon: LucideIcon;
-  value: string;
-  sub?: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 text-gray-400" />
-        <p className="text-xs font-medium uppercase tracking-wider text-gray-500">{label}</p>
-      </div>
-      <p className="mt-2 text-xl font-semibold text-gray-900">{value}</p>
-      {typeof sub === 'string' ? <p className="mt-1 text-xs text-gray-500">{sub}</p> : sub}
-    </div>
   );
 }
 

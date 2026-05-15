@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Calculator,
   Plus,
   FileDown,
-  ArrowLeft,
   FlaskConical,
   Send,
   CheckCircle2,
@@ -22,6 +21,8 @@ import { useProperties } from '@/hooks/useProperties';
 import { useDraftLetter } from '@/hooks/useAI';
 import { SkeletonTable, SkeletonListRow } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import { IndexHeader } from '@/components/IndexHeader';
+import { DetailHeader, StatusTone } from '@/components/DetailHeader';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
 import { isFeatureEnabled } from '@/lib/features';
 
@@ -88,54 +89,104 @@ function ReconciliationList({
   const { data: properties } = useProperties();
   const { data: reconciliations, isLoading, error, refetch } = useReconciliations(propertyId || undefined);
   const { open } = useGlobalUI();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!reconciliations) return [];
+    const q = search.trim().toLowerCase();
+    return reconciliations.filter((r) => {
+      if (statusFilter && r.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        (r.propertyName ?? '').toLowerCase().includes(q) ||
+        r.periodStart.toLowerCase().includes(q) ||
+        r.periodEnd.toLowerCase().includes(q) ||
+        r.status.toLowerCase().includes(q)
+      );
+    });
+  }, [reconciliations, search, statusFilter]);
+
+  const total = reconciliations?.length ?? 0;
+  const showing = filtered.length;
+  const propertyName = properties?.find((p) => p.id === propertyId)?.name;
+
+  const activeFilters = [
+    ...(propertyId && propertyName
+      ? [{ label: `Property: ${propertyName}`, onRemove: () => onPropertyChange('') }]
+      : []),
+    ...(statusFilter
+      ? [{ label: `Status: ${statusFilter}`, onRemove: () => setStatusFilter('') }]
+      : []),
+    ...(search
+      ? [{ label: `Search: "${search}"`, onRemove: () => setSearch('') }]
+      : []),
+  ];
 
   return (
     <>
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Reconciliations</h2>
-          <p className="mt-1 text-sm text-gray-600">CAM reconciliation workflows and history.</p>
-        </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          {isFeatureEnabled('whatIfSimulator') && (
+      <IndexHeader
+        title="Reconciliations"
+        description="CAM reconciliation workflows and history."
+        count={total}
+        primaryAction={{
+          label: 'New reconciliation',
+          icon: Plus,
+          onClick: () => open('quickAddReconciliation'),
+        }}
+        secondaryActions={
+          isFeatureEnabled('whatIfSimulator') && (
             <button
               onClick={() => navigate('/reconciliations/simulator')}
               className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               <FlaskConical className="h-4 w-4" />
-              <span className="hidden sm:inline">Advanced: What-If</span>
+              <span className="hidden sm:inline">What-If Simulator</span>
               <span className="sm:hidden">What-If</span>
             </button>
-          )}
-          <button
-            onClick={() => open('quickAddReconciliation')}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            <Plus className="h-4 w-4" />
-            New reconciliation
-          </button>
-        </div>
-      </div>
-
-      {/* Property filter */}
-      <div className="flex items-center gap-3">
-        <label htmlFor="property-filter" className="text-sm font-medium text-gray-700">
-          Property:
-        </label>
-        <select
-          id="property-filter"
-          value={propertyId}
-          onChange={(e) => onPropertyChange(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        >
-          <option value="">All properties</option>
-          {properties?.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </div>
+          )
+        }
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search reconciliations...',
+        }}
+        filters={
+          <>
+            <select
+              value={propertyId}
+              onChange={(e) => onPropertyChange(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All properties</option>
+              {properties?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All statuses</option>
+              <option value="draft">Draft</option>
+              <option value="in_progress">In progress</option>
+              <option value="pending">Pending</option>
+              <option value="completed">Completed</option>
+            </select>
+          </>
+        }
+        activeFilters={activeFilters}
+        resultLabel={
+          total > 0 && showing !== total
+            ? `Showing ${showing} of ${total}`
+            : total > 0
+              ? `Showing ${total}`
+              : undefined
+        }
+      />
 
       {error && (
         <EmptyState
@@ -155,7 +206,7 @@ function ReconciliationList({
 
       {isLoading ? (
         <SkeletonTable rows={4} columns={5} />
-      ) : reconciliations && reconciliations.length > 0 ? (
+      ) : filtered.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -168,7 +219,7 @@ function ReconciliationList({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {reconciliations.map((rec) => (
+              {filtered.map((rec) => (
                 <tr
                   key={rec.id}
                   className="cursor-pointer hover:bg-gray-50"
@@ -197,17 +248,23 @@ function ReconciliationList({
       ) : !error ? (
         <EmptyState
           icon={Calculator}
-          title="No reconciliations yet"
-          description="Create a reconciliation to allocate CAM expenses across your tenants."
+          title={total === 0 ? 'No reconciliations yet' : 'No reconciliations match'}
+          description={
+            total === 0
+              ? 'Create a reconciliation to allocate CAM expenses across your tenants.'
+              : 'Try a different search or clear filters.'
+          }
           action={
-            <button
-              type="button"
-              onClick={() => open('quickAddReconciliation')}
-              className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              <Plus className="h-4 w-4" />
-              New reconciliation
-            </button>
+            total === 0 ? (
+              <button
+                type="button"
+                onClick={() => open('quickAddReconciliation')}
+                className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                <Plus className="h-4 w-4" />
+                New reconciliation
+              </button>
+            ) : null
           }
         />
       ) : null}
@@ -218,15 +275,28 @@ function ReconciliationList({
 function ReconciliationDetail({
   reconciliationId,
   justCreated,
-  onBack,
+  onBack: _onBack,
 }: {
   reconciliationId: string;
   justCreated?: boolean;
   onBack: () => void;
 }) {
   const { data: reconciliation, isLoading, error } = useReconciliation(reconciliationId);
+  const { data: siblingReconciliations } = useReconciliations(reconciliation?.propertyId);
   const [showLetterModal, setShowLetterModal] = useState(false);
   const draftLetterMutation = useDraftLetter();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const siblings = useMemo(() => {
+    if (!siblingReconciliations) return [];
+    return siblingReconciliations
+      .slice()
+      .sort((a, b) => b.periodStart.localeCompare(a.periodStart))
+      .map((r) => ({
+        id: r.id,
+        label: `${r.propertyName ?? r.propertyId} · ${r.periodStart} — ${r.periodEnd}`,
+      }));
+  }, [siblingReconciliations]);
 
   function handleDownload(format: 'pdf' | 'excel') {
     const url = `/api/reports/variance?reconciliationId=${reconciliationId}&format=${format}`;
@@ -281,7 +351,7 @@ function ReconciliationDetail({
         action={
           <button
             type="button"
-            onClick={onBack}
+            onClick={_onBack}
             className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             Go back
@@ -291,69 +361,90 @@ function ReconciliationDetail({
     );
   }
 
+  const statusTone: StatusTone =
+    reconciliation.status === 'completed'
+      ? 'success'
+      : reconciliation.status === 'draft'
+        ? 'neutral'
+        : reconciliation.status === 'in_progress'
+          ? 'info'
+          : reconciliation.status === 'pending'
+            ? 'warning'
+            : 'neutral';
+
+  const periodLabel = `${reconciliation.periodStart} — ${reconciliation.periodEnd}`;
+
   return (
     <>
-      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            aria-label="Back"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-900">
-              {reconciliation.propertyName || 'Reconciliation'}
-            </h2>
-            <p className="mt-1 text-sm text-gray-600">
-              Period: {reconciliation.periodStart} — {reconciliation.periodEnd}
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => handleDownload('pdf')}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            <FileDown className="h-4 w-4" />
-            PDF
-          </button>
-          <button
-            onClick={() => handleDownload('excel')}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            <FileDown className="h-4 w-4" />
-            Excel
-          </button>
-          <button
-            onClick={handleExplainVariances}
-            className="inline-flex items-center gap-2 rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100"
-          >
-            <Sparkles className="h-4 w-4" />
-            Explain variances
-          </button>
-          <button
-            onClick={handleDraftLetter}
-            disabled={draftLetterMutation.isPending}
-            className="inline-flex items-center gap-2 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
-          >
-            {draftLetterMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            Draft Letter
-          </button>
-          <button
-            onClick={handleSendToTenants}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            <Send className="h-4 w-4" />
-            Send to tenants
-          </button>
-        </div>
-      </div>
+      <DetailHeader
+        breadcrumb={[
+          { label: 'Reconciliations', href: '/reconciliations' },
+          {
+            label: `${reconciliation.propertyName ?? 'Reconciliation'} · ${periodLabel}`,
+          },
+        ]}
+        icon={Calculator}
+        iconColor="amber"
+        title={reconciliation.propertyName || 'Reconciliation'}
+        subtitle={<span>Period: {periodLabel}</span>}
+        status={{ label: reconciliation.status.replace(/_/g, ' '), tone: statusTone }}
+        recordSwitcher={
+          siblings.length > 1
+            ? {
+                items: siblings,
+                currentId: reconciliation.id,
+                onSelect: (newId) => {
+                  searchParams.set('created', newId);
+                  setSearchParams(searchParams);
+                },
+              }
+            : undefined
+        }
+        actions={
+          <>
+            <button
+              onClick={() => handleDownload('pdf')}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              PDF
+            </button>
+            <button
+              onClick={() => handleDownload('excel')}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              Excel
+            </button>
+            <button
+              onClick={handleExplainVariances}
+              className="inline-flex items-center gap-1.5 rounded-md border border-purple-300 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Explain variances
+            </button>
+            <button
+              onClick={handleDraftLetter}
+              disabled={draftLetterMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+            >
+              {draftLetterMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              Draft letter
+            </button>
+            <button
+              onClick={handleSendToTenants}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Send statements
+            </button>
+          </>
+        }
+      />
 
       {/* Success banner if just created */}
       {justCreated && (
@@ -405,21 +496,23 @@ function ReconciliationDetail({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Total actual</p>
-          <p className="mt-1 text-xl font-semibold text-gray-900">
+          <p className="mt-1 text-2xl font-semibold text-gray-900">
             ${(reconciliation.totalActualCosts / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Total budgeted</p>
-          <p className="mt-1 text-xl font-semibold text-gray-900">
+          <p className="mt-1 text-2xl font-semibold text-gray-900">
             ${(reconciliation.totalBudgetedCosts / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Status</p>
-          <div className="mt-1">
-            <StatusBadge status={reconciliation.status} />
-          </div>
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Variance</p>
+          <p className="mt-1 text-2xl font-semibold text-gray-900">
+            <VarianceCell
+              value={reconciliation.totalActualCosts - reconciliation.totalBudgetedCosts}
+            />
+          </p>
         </div>
       </div>
 

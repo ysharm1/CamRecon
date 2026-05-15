@@ -6,20 +6,20 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
-  Search,
   Eye,
   Copy,
   Trash2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useDocuments, useDocumentVersions, Document } from '@/hooks/useDocuments';
+import { useProperties } from '@/hooks/useProperties';
 import { SkeletonTable } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { RowActions } from '@/components/RowActions';
+import { IndexHeader } from '@/components/IndexHeader';
 import { useGlobalUI } from '@/hooks/useCommandPalette';
 
 const DOCUMENT_TYPES = [
-  { value: '', label: 'All types' },
   { value: 'lease', label: 'Lease' },
   { value: 'amendment', label: 'Amendment' },
   { value: 'cam_report', label: 'CAM Report' },
@@ -32,7 +32,9 @@ export function DocumentsPage() {
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [propertyFilter, setPropertyFilter] = useState('');
   const { data: documents, isLoading, error, refetch } = useDocuments();
+  const { data: properties } = useProperties();
   const { open } = useGlobalUI();
   const navigate = useNavigate();
 
@@ -41,6 +43,7 @@ export function DocumentsPage() {
     const q = search.trim().toLowerCase();
     return documents.filter((d) => {
       if (typeFilter && d.documentType !== typeFilter) return false;
+      if (propertyFilter && d.propertyId !== propertyFilter) return false;
       if (!q) return true;
       return (
         d.title.toLowerCase().includes(q) ||
@@ -48,7 +51,7 @@ export function DocumentsPage() {
         (d.tenantName ?? '').toLowerCase().includes(q)
       );
     });
-  }, [documents, search, typeFilter]);
+  }, [documents, search, typeFilter, propertyFilter]);
 
   if (error) {
     return (
@@ -72,61 +75,90 @@ export function DocumentsPage() {
     setExpandedDocId((prev) => (prev === docId ? null : docId));
   }
 
+  const total = documents?.length ?? 0;
+  const showing = filtered.length;
+  const propertyName = properties?.find((p) => p.id === propertyFilter)?.name;
+  const typeName = DOCUMENT_TYPES.find((t) => t.value === typeFilter)?.label;
+
+  const activeFilters = [
+    ...(propertyFilter && propertyName
+      ? [{ label: `Property: ${propertyName}`, onRemove: () => setPropertyFilter('') }]
+      : []),
+    ...(typeFilter && typeName
+      ? [{ label: `Type: ${typeName}`, onRemove: () => setTypeFilter('') }]
+      : []),
+    ...(search
+      ? [{ label: `Search: "${search}"`, onRemove: () => setSearch('') }]
+      : []),
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Documents</h2>
-          <p className="mt-1 text-sm text-gray-600">Upload, manage, and track document versions.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => open('upload')}
-          className="inline-flex items-center gap-2 self-start rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 sm:self-auto"
-        >
-          <Upload className="h-4 w-4" />
-          Upload document
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search documents..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          />
-        </div>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        >
-          {DOCUMENT_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <IndexHeader
+        title="Documents"
+        description="Upload, manage, and track document versions."
+        count={total}
+        primaryAction={{
+          label: 'Upload document',
+          icon: Upload,
+          onClick: () => open('upload'),
+        }}
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search documents...',
+        }}
+        filters={
+          <>
+            <select
+              value={propertyFilter}
+              onChange={(e) => setPropertyFilter(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All properties</option>
+              {properties?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">All types</option>
+              {DOCUMENT_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </>
+        }
+        activeFilters={activeFilters}
+        resultLabel={
+          total > 0 && showing !== total
+            ? `Showing ${showing} of ${total}`
+            : total > 0
+              ? `Showing ${total}`
+              : undefined
+        }
+      />
 
       {isLoading ? (
         <SkeletonTable rows={5} columns={5} />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={FileText}
-          title={documents && documents.length === 0 ? 'No documents yet' : 'No documents match'}
+          title={total === 0 ? 'No documents yet' : 'No documents match'}
           description={
-            documents && documents.length === 0
+            total === 0
               ? 'Drag and drop a file to upload, or use the Upload button. Leases will be auto-analyzed by AI.'
-              : 'Try a different search or clear the type filter.'
+              : 'Try a different search or clear filters.'
           }
           action={
-            documents && documents.length === 0 ? (
+            total === 0 ? (
               <button
                 type="button"
                 onClick={() => open('upload')}

@@ -1,10 +1,29 @@
-import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Users, FileText, Activity as ActivityIcon, CheckCircle, AlertCircle, Clock, DollarSign, Sparkles, Loader2 } from 'lucide-react';
-import { useTenant, useTenantActivity } from '@/hooks/useTenants';
+import { useState, useMemo } from 'react';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import {
+  Users,
+  FileText,
+  Activity as ActivityIcon,
+  AlertCircle,
+  DollarSign,
+  Sparkles,
+  Loader2,
+  CalendarClock,
+  CalendarDays,
+  Ruler,
+  TrendingUp,
+  Send,
+  Mail,
+  Upload,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useTenant, useTenants, useTenantActivity } from '@/hooks/useTenants';
 import { useLeaseSummary } from '@/hooks/useAI';
 import { SkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
-import { useState } from 'react';
+import { DetailHeader, StatusTone } from '@/components/DetailHeader';
+import { KPICard } from '@/components/KPICard';
+import { useGlobalUI } from '@/hooks/useCommandPalette';
 import type { LeaseInfo, TenantDocument } from '@/hooks/useTenants';
 import type { ActivityEntry } from '@/hooks/useProperties';
 
@@ -14,6 +33,70 @@ export function TenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: tenant, isLoading, error } = useTenant(id || '');
   const [activeTab, setActiveTab] = useState<Tab>('lease');
+  const { open } = useGlobalUI();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Fetch siblings (other tenants in same property) for record switcher.
+  const { data: siblingTenants } = useTenants(tenant?.propertyId);
+
+  // Determine if user came from property page — if so, breadcrumb includes
+  // property hop. Falls back to flat /tenants breadcrumb otherwise.
+  const cameFromProperty = location.state &&
+    typeof location.state === 'object' &&
+    'fromProperty' in location.state &&
+    location.state.fromProperty === true;
+
+  const breadcrumb = useMemo(() => {
+    if (!tenant) return [];
+    if (cameFromProperty && tenant.propertyId && tenant.propertyName) {
+      return [
+        { label: 'Properties', href: '/properties' },
+        { label: tenant.propertyName, href: `/properties/${tenant.propertyId}` },
+        { label: 'Tenants' },
+        { label: tenant.name },
+      ];
+    }
+    return [
+      { label: 'Tenants', href: '/tenants' },
+      { label: tenant.name },
+    ];
+  }, [tenant, cameFromProperty]);
+
+  const siblings = useMemo(() => {
+    if (!siblingTenants || !tenant) return [];
+    return siblingTenants
+      .filter((t) => t.propertyId === tenant.propertyId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((t) => ({ id: t.id, label: t.name }));
+  }, [siblingTenants, tenant]);
+
+  const kpis = useMemo(() => {
+    if (!tenant) return null;
+    const lease = tenant.lease;
+    if (!lease) {
+      return {
+        monthlyRent: '—',
+        expiration: '—',
+        daysToExpiry: '—',
+        daysTone: 'neutral' as const,
+        sqft: tenant.squareFootage.toLocaleString(),
+        variance: '—',
+      };
+    }
+    const expDate = new Date(lease.expirationDate);
+    const days = Math.ceil((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    const daysTone: 'positive' | 'negative' | 'neutral' =
+      days < 0 ? 'negative' : days <= 90 ? 'negative' : days <= 180 ? 'neutral' : 'positive';
+    return {
+      monthlyRent: `$${(lease.baseRentCents / 100).toLocaleString()}`,
+      expiration: expDate.toLocaleDateString(),
+      daysToExpiry: days < 0 ? 'Expired' : `${days}`,
+      daysTone,
+      sqft: tenant.squareFootage.toLocaleString(),
+      variance: '—', // Variance YTD requires reconciliation data; placeholder.
+    };
+  }, [tenant]);
 
   if (error) {
     return (
@@ -66,55 +149,110 @@ export function TenantDetailPage() {
     { key: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
   ];
 
+  const statusTone: StatusTone =
+    tenant.status === 'active' ? 'success' : tenant.status === 'pending' ? 'warning' : 'neutral';
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <Link
-          to="/tenants"
-          className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-2"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to tenants
-        </Link>
-        <div className="flex items-center gap-3">
-          <div className="rounded-full bg-emerald-50 p-2">
-            <Users className="h-6 w-6 text-emerald-600" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-900">{tenant.name}</h2>
-            <p className="text-sm text-gray-500">
-              Suite {tenant.suiteNumber} · {tenant.squareFootage.toLocaleString()} sqft
-              {tenant.propertyName && (
-                <>
-                  {' · '}
-                  <Link
-                    to={`/properties/${tenant.propertyId}`}
-                    className="text-indigo-600 hover:text-indigo-500"
-                  >
-                    {tenant.propertyName}
-                  </Link>
-                </>
-              )}
-            </p>
-          </div>
-          <StatusBadge status={tenant.status} />
-        </div>
-      </div>
+      <DetailHeader
+        breadcrumb={breadcrumb}
+        icon={Users}
+        iconColor="emerald"
+        title={tenant.name}
+        subtitle={
+          <>
+            Suite {tenant.suiteNumber} · {tenant.squareFootage.toLocaleString()} sqft
+            {tenant.propertyName && (
+              <>
+                {' · '}
+                <Link
+                  to={`/properties/${tenant.propertyId}`}
+                  className="text-indigo-600 hover:text-indigo-500"
+                >
+                  {tenant.propertyName}
+                </Link>
+              </>
+            )}
+          </>
+        }
+        status={{ label: tenant.status, tone: statusTone }}
+        recordSwitcher={
+          siblings.length > 1
+            ? {
+                items: siblings,
+                currentId: tenant.id,
+                onSelect: (newId) => navigate(`/tenants/${newId}`),
+              }
+            : undefined
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => open('upload', { upload: { propertyId: tenant.propertyId, tenantId: tenant.id } })}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              + Document
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('lease')}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              View lease
+            </button>
+            <button
+              type="button"
+              onClick={() => toast.success(`Statement will be emailed to ${tenant.contactEmail}`)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Send statement
+            </button>
+          </>
+        }
+      />
 
-      {/* Tenant Info Summary */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm text-gray-600">Contact Email</p>
-          <p className="text-sm font-medium text-gray-900 mt-1">{tenant.contactEmail}</p>
+      {/* KPI snapshot row */}
+      {kpis && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <KPICard label="Monthly rent" icon={DollarSign} value={kpis.monthlyRent} />
+          <KPICard label="Lease expires" icon={CalendarDays} value={kpis.expiration} />
+          <KPICard
+            label="Days to expiry"
+            icon={CalendarClock}
+            value={kpis.daysToExpiry}
+            delta={
+              kpis.daysToExpiry !== '—'
+                ? {
+                    value: kpis.daysTone === 'negative' ? 'soon' : kpis.daysTone === 'positive' ? 'on track' : 'watch',
+                    tone: kpis.daysTone,
+                  }
+                : undefined
+            }
+          />
+          <KPICard label="Total sqft" icon={Ruler} value={kpis.sqft} />
+          <KPICard
+            label="Variance YTD"
+            icon={TrendingUp}
+            value={kpis.variance}
+            hint="From reconciliations"
+          />
         </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm text-gray-600">Suite Number</p>
-          <p className="text-sm font-medium text-gray-900 mt-1">{tenant.suiteNumber}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-sm text-gray-600">Leased Area</p>
-          <p className="text-sm font-medium text-gray-900 mt-1">{tenant.squareFootage.toLocaleString()} sqft</p>
+      )}
+
+      {/* Contact card */}
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="flex items-center gap-2 text-sm">
+          <Mail className="h-4 w-4 text-gray-400" />
+          <a
+            href={`mailto:${tenant.contactEmail}`}
+            className="text-indigo-600 hover:text-indigo-500"
+          >
+            {tenant.contactEmail}
+          </a>
         </div>
       </div>
 
@@ -396,24 +534,5 @@ function ActivityTab({ tenantId }: { tenantId: string }) {
         </div>
       ))}
     </div>
-  );
-}
-
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    active: 'bg-green-100 text-green-700',
-    inactive: 'bg-gray-100 text-gray-700',
-    pending: 'bg-amber-100 text-amber-700',
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        colors[status] || 'bg-gray-100 text-gray-700'
-      }`}
-    >
-      {status}
-    </span>
   );
 }
