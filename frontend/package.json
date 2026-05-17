@@ -5,10 +5,10 @@
   "description": "Property Document Platform - Frontend",
   "type": "module",
   "scripts": {
-    "dev": "../node_modules/.bin/vite",
-    "build": "../node_modules/.bin/tsc -b && ../node_modules/.bin/vite build",
-    "preview": "../node_modules/.bin/vite preview",
-    "lint": "../node_modules/.bin/eslint src --ext .ts,.tsx"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .ts,.tsx"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",
