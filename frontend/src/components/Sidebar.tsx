@@ -74,6 +74,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <div className="flex items-center gap-2">
             <Building2 className="h-7 w-7 text-indigo-600" />
             <span className="text-lg font-semibold text-gray-900">PropDoc</span>
+            <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-indigo-700">Beta</span>
           </div>
           <button
             className="rounded-md p-1 text-gray-400 hover:text-gray-600 lg:hidden"

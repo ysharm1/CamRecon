@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import {
   logger,
@@ -31,7 +33,35 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for SPA compatibility
+
+// Rate limiting
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 login attempts per 15 min per IP
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Try again in 15 minutes.' } },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 100, // 100 uploads per hour per IP
+  message: { error: { code: 'RATE_LIMITED', message: 'Upload limit reached. Try again later.' } },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200, // 200 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Core middleware
+app.use(generalLimiter);
 app.use(cors());
 app.use(express.json());
 app.use(requestIdMiddleware);
@@ -43,8 +73,8 @@ app.get('/api/health', (_req, res) => {
 });
 
 // API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/documents', documentRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/documents', uploadLimiter, documentRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/reconciliations', camRoutes);
 app.use('/api/abstractions', abstractionRoutes);
