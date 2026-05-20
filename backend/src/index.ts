@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import { initSentry, captureException } from './sentry';
 import {
   logger,
   requestIdMiddleware,
@@ -30,8 +31,14 @@ import { aiRoutes } from './ai';
 
 dotenv.config();
 
+// Initialize Sentry (must be before Express app creation)
+initSentry();
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Trust Render's proxy (required for rate limiting to use real client IP)
+app.set('trust proxy', 1);
 
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false })); // CSP disabled for SPA compatibility
